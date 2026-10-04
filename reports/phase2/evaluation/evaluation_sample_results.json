@@ -1,0 +1,83 @@
+{
+  "status": "blocked",
+  "dataset": {
+    "path": "reports\\phase2\\evaluation\\evaluation_dataset.jsonl",
+    "source": "microsoft/ms_marco",
+    "classification": "official_or_cached",
+    "official_ms_marco": true,
+    "provenance": {
+      "source": {
+        "dataset": "microsoft/ms_marco",
+        "config": "v2.1",
+        "split": "validation",
+        "local_file": "C:\\Users\\naman\\.cache\\huggingface\\hub\\datasets--microsoft--ms_marco\\snapshots\\a47ee7aae8d7d466ba15f9f0bfac3b3681087b3a\\v2.1\\validation-00000-of-00001.parquet"
+      },
+      "rows_written": 100,
+      "format": "MS MARCO query, answer, and selected validation passages",
+      "output": "reports\\phase2\\evaluation\\evaluation_dataset.jsonl"
+    }
+  },
+  "query_count": 3,
+  "valid_query_count": 3,
+  "prior_retrieval_validation": null,
+  "retrieval_config": {
+    "top_k": 5,
+    "rrf_k": 60,
+    "dense_candidate_k": 50,
+    "sparse_candidate_k": 50
+  },
+  "retrieval_modes": [
+    "dense",
+    "sparse",
+    "hybrid"
+  ],
+  "run_timestamp_utc": "2026-10-03T19:14:27.057032+00:00",
+  "ragas_version": "0.2.15",
+  "dataset_library_version": "5.0.1",
+  "judge_provider": "cloudflare_workers_ai",
+  "judge_model": "@cf/openai/gpt-oss-20b",
+  "judge_enabled": true,
+  "judge_preflight_attempted": true,
+  "judge_preflight_passed": false,
+  "judge_base_url": "https://api.cloudflare.com/client/v4/accounts/bddb7e4e6fc1abdb939e07f124af9862/ai/v1",
+  "judge": {
+    "provider": "cloudflare_workers_ai",
+    "model": "@cf/openai/gpt-oss-20b",
+    "enabled": true,
+    "base_url": "https://api.cloudflare.com/client/v4/accounts/bddb7e4e6fc1abdb939e07f124af9862/ai/v1",
+    "request_made": true,
+    "blocked_reason": "Cloudflare preflight failed: APIConnectionError: Connection error.",
+    "retry_count": 0,
+    "preflight": {
+      "attempted": true,
+      "passed": false,
+      "http_status": null,
+      "http_status_note": "No HTTP response was received; connection failed before a status was available.",
+      "error": "APIConnectionError: Connection error."
+    }
+  },
+  "per_mode_results": {
+    "dense": {
+      "retrieval_successes": 0,
+      "retrieval_failures": 0,
+      "context_precision": null,
+      "context_recall": null
+    },
+    "sparse": {
+      "retrieval_successes": 0,
+      "retrieval_failures": 0,
+      "context_precision": null,
+      "context_recall": null
+    },
+    "hybrid": {
+      "retrieval_successes": 0,
+      "retrieval_failures": 0,
+      "context_precision": null,
+      "context_recall": null
+    }
+  },
+  "results": [],
+  "per_query_metrics": {},
+  "aggregate": {},
+  "evaluation_error": "Cloudflare preflight failed: APIConnectionError: Connection error."
+}

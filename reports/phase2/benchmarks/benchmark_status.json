@@ -1,0 +1,38 @@
+{
+  "status": "blocked",
+  "audit_timestamp_utc": "2026-10-03T13:49:17.377075+00:00",
+  "query_source": "microsoft/ms_marco/v1.1:validation",
+  "requested_queries": 100,
+  "query_count": 0,
+  "indexed_passages": 89896,
+  "dense_requests": 0,
+  "sparse_requests": 0,
+  "hybrid_requests": 0,
+  "latency_ms": {
+    "dense": {
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "sparse": {
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "hybrid": {
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    }
+  },
+  "retrieval_config": {
+    "top_k": 5,
+    "rrf_k": 60,
+    "dense_candidate_k": 50,
+    "sparse_candidate_k": 50
+  },
+  "reason": "ConnectError: [Errno 11001] getaddrinfo failed"
+}

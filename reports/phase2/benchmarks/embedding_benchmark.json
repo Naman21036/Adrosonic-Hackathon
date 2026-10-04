@@ -1,0 +1,168 @@
+{
+  "status": "complete",
+  "timestamp_utc": "2026-10-03T07:34:33.333977+00:00",
+  "source": "microsoft/ms_marco/v1.1:train",
+  "sample_count": 256,
+  "batch_sizes": [
+    8,
+    16,
+    32
+  ],
+  "hardware": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.13.15",
+    "torch": "2.14.1+cu130",
+    "torch_cuda_build": "13.0",
+    "cuda_available": true,
+    "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+    "cuda_benchmark_skipped_reason": null
+  },
+  "device_results": [
+    {
+      "device": "cpu",
+      "gpu_name": null,
+      "precision": "float32",
+      "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+      "model_revision": "main",
+      "max_sequence_length": 256,
+      "results": [
+        {
+          "requested_batch_size": 8,
+          "sample_count": 256,
+          "status": "ok",
+          "embedding_seconds": 190.26569620000373,
+          "embedding_passages_per_second": 1.345486890768253,
+          "effective_batch_size_after_oom_adaptation": 8,
+          "embedding_dimension": 1024,
+          "all_vectors_finite": true,
+          "ingestion_seconds": 103.20457189999433,
+          "ingestion_passages_per_second": 2.48051026506912,
+          "qdrant_upsert_batch_size": 128,
+          "indexed_in_temporary_qdrant_and_bm25": 256,
+          "ingestion_stage_seconds": {
+            "embedding_seconds": 95.83672339999612,
+            "sparse_seconds": 0.10769869999785442,
+            "qdrant_seconds": 7.02860050000163
+          }
+        },
+        {
+          "requested_batch_size": 16,
+          "sample_count": 256,
+          "status": "ok",
+          "embedding_seconds": 154.30794259999675,
+          "embedding_passages_per_second": 1.6590202402193481,
+          "effective_batch_size_after_oom_adaptation": 16,
+          "embedding_dimension": 1024,
+          "all_vectors_finite": true,
+          "ingestion_seconds": 162.8482346000019,
+          "ingestion_passages_per_second": 1.5720158135505942,
+          "qdrant_upsert_batch_size": 128,
+          "indexed_in_temporary_qdrant_and_bm25": 256,
+          "ingestion_stage_seconds": {
+            "embedding_seconds": 151.65962530000252,
+            "sparse_seconds": 0.08009970000421163,
+            "qdrant_seconds": 10.78689440000744
+          }
+        },
+        {
+          "requested_batch_size": 32,
+          "sample_count": 256,
+          "status": "ok",
+          "embedding_seconds": 285.3936859000023,
+          "embedding_passages_per_second": 0.8970065304447505,
+          "effective_batch_size_after_oom_adaptation": 32,
+          "embedding_dimension": 1024,
+          "all_vectors_finite": true,
+          "ingestion_seconds": 202.20971519999875,
+          "ingestion_passages_per_second": 1.266012366155598,
+          "qdrant_upsert_batch_size": 128,
+          "indexed_in_temporary_qdrant_and_bm25": 256,
+          "ingestion_stage_seconds": {
+            "embedding_seconds": 189.97484629999963,
+            "sparse_seconds": 0.13896699999895645,
+            "qdrant_seconds": 11.567577900001197
+          }
+        }
+      ]
+    },
+    {
+      "device": "cuda",
+      "gpu_name": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+      "precision": "float16",
+      "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+      "model_revision": "main",
+      "max_sequence_length": 256,
+      "results": [
+        {
+          "requested_batch_size": 8,
+          "sample_count": 256,
+          "status": "ok",
+          "embedding_seconds": 4.736751800002821,
+          "embedding_passages_per_second": 54.04547479136389,
+          "effective_batch_size_after_oom_adaptation": 8,
+          "embedding_dimension": 1024,
+          "all_vectors_finite": true,
+          "gpu_memory_allocated_gb": 1.1176691055297852,
+          "gpu_memory_reserved_gb": 1.412109375,
+          "gpu_peak_allocated_gb": 1.3243098258972168,
+          "gpu_peak_reserved_gb": 1.412109375,
+          "ingestion_seconds": 11.657110499996634,
+          "ingestion_passages_per_second": 21.96084527122514,
+          "qdrant_upsert_batch_size": 128,
+          "indexed_in_temporary_qdrant_and_bm25": 256,
+          "ingestion_stage_seconds": {
+            "embedding_seconds": 4.815928099997109,
+            "sparse_seconds": 0.031270899999071844,
+            "qdrant_seconds": 6.737317200000689
+          }
+        },
+        {
+          "requested_batch_size": 16,
+          "sample_count": 256,
+          "status": "ok",
+          "embedding_seconds": 4.853350999997929,
+          "embedding_passages_per_second": 52.74706074217777,
+          "effective_batch_size_after_oom_adaptation": 16,
+          "embedding_dimension": 1024,
+          "all_vectors_finite": true,
+          "gpu_memory_allocated_gb": 1.1176691055297852,
+          "gpu_memory_reserved_gb": 1.697265625,
+          "gpu_peak_allocated_gb": 1.5289921760559082,
+          "gpu_peak_reserved_gb": 1.697265625,
+          "ingestion_seconds": 11.443395199996303,
+          "ingestion_passages_per_second": 22.370983045318816,
+          "qdrant_upsert_batch_size": 128,
+          "indexed_in_temporary_qdrant_and_bm25": 256,
+          "ingestion_stage_seconds": {
+            "embedding_seconds": 4.971520699989924,
+            "sparse_seconds": 0.04371779999928549,
+            "qdrant_seconds": 6.306243500002893
+          }
+        },
+        {
+          "requested_batch_size": 32,
+          "sample_count": 256,
+          "status": "ok",
+          "embedding_seconds": 5.090086899996095,
+          "embedding_passages_per_second": 50.29383683021137,
+          "effective_batch_size_after_oom_adaptation": 32,
+          "embedding_dimension": 1024,
+          "all_vectors_finite": true,
+          "gpu_memory_allocated_gb": 1.1176691055297852,
+          "gpu_memory_reserved_gb": 2.337890625,
+          "gpu_peak_allocated_gb": 1.9408159255981445,
+          "gpu_peak_reserved_gb": 2.337890625,
+          "ingestion_seconds": 14.282892100003664,
+          "ingestion_passages_per_second": 17.923540849260796,
+          "qdrant_upsert_batch_size": 128,
+          "indexed_in_temporary_qdrant_and_bm25": 256,
+          "ingestion_stage_seconds": {
+            "embedding_seconds": 5.267166700003145,
+            "sparse_seconds": 0.030424100004893262,
+            "qdrant_seconds": 8.93736770000396
+          }
+        }
+      ]
+    }
+  ]
+}
