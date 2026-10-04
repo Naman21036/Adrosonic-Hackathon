@@ -1,195 +1,113 @@
-# Adrosonic Vector Retrieval for RAG
+# Adrosonic Phase 1: Dense Retrieval for RAG
 
-A local-first retrieval system and hackathon demo for grounded question answering. The backend combines Qwen dense embeddings, Local Qdrant, SQLite FTS5 BM25, and Reciprocal Rank Fusion (RRF). A Next.js dashboard shows service state, live retrieval, metadata filtering, index updates, evaluation provenance, and benchmark results.
+A runnable, dense-only baseline over the original MS MARCO passage collection. It uses Hugging Face Datasets for bounded streaming, a normalized Sentence Transformers encoder, persistent local Qdrant with cosine/HNSW search, FastAPI, Streamlit, and RAGAS evaluation. Passage texts remain the original corpus retrieval units.
 
-## Current result provenance
+## Requirements and setup
 
-| View | Source | What it means |
-| --- | --- | --- |
-| Actual Results | `reports/phase2/evaluation/ragas_matched_corpus.json` | Completed 10-query matched-corpus retrieval and RAGAS evaluation; the queries are synthetic and are not official MS MARCO queries. |
-| 100-Query Demo | `reports/demo/benchmark_100_simulated.json` | Deterministic simulated chart data; no 100-query retrieval run is performed to create or display it. |
+- Python 3.11 (3.12 is also allowed for local development), 8 GB+ RAM recommended, and enough disk for model files, the dataset cache, and Qdrant vectors.
+- CPU runs are supported. An optional supported PyTorch accelerator can be selected with `DEVICE`.
+- Network access is needed the first time to download the Hugging Face dataset and model.
 
-The frontend keeps these views in separate tabs. Demo values are marked **DEMO / SIMULATED** and never enter the production retrieval path or actual evaluation/benchmark reports.
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
 
-## Architecture
+The optimized candidate defaults to `Qwen/Qwen3-Embedding-0.6B`, 1024 dimensions, FP32, batch size 128, CPU, cosine search, and top 5. The prior `sentence-transformers/all-MiniLM-L6-v2` model is retained as `BASELINE_EMBEDDING_MODEL`, with a separate `BASELINE_COLLECTION_NAME`; existing baseline collections and reports are preserved. Qwen supports instructed queries and Matryoshka dimensions from 32 through 1024; the screening plan checks 1024, 768, 512, and 256. Its model card requires Transformers 4.51 or newer. See the [Qwen model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) for the supported model procedure and dimensions.
+
+The existing `.env` contains `HUGGINGFACE_API_KEY`. Configuration now reads it as a masked secret and passes it to Hugging Face dataset and model downloads. I verified the token with Hugging Face's authenticated identity endpoint; only the success status was emitted. `.env` is ignored by Git, and `.env.example` contains an empty placeholder. Do not copy the token into source, logs, or reports. Public model and dataset downloads may also work without a token, subject to Hub rate limits.
+
+Change `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `EMBEDDING_PRECISION`, `QUERY_INSTRUCTION`, `MODEL_REVISION`, `BATCH_SIZE`, `COLLECTION_NAME`, `DATA_LIMIT`, `DEVICE`, `TOP_K`, and paths as needed. `EMBEDDING_DIMENSION=0` uses the model-native dimension. On CPU, FP16/BF16 requests fall back to FP32; GPU mixed precision should be used only on supported hardware. The default PyTorch install is CPU; for CUDA, install a compatible PyTorch build before setting `DEVICE=cuda`. The full corpus contains about 9.85 million rows and needs substantially more disk/time than screening.
+
+## Index passages
+
+```powershell
+python -m adrosonic_retrieval.indexer
+```
+
+The default source is `sentence-transformers/msmarco-corpus`, config `passage`, split `train`; it exposes stable `pid` and original `text` fields. Streaming and batched encoding bound working memory. Numeric passage IDs are preserved as Qdrant point IDs; rerunning safely upserts the same IDs. The collection schema is checked before ingestion. Reports are written under `OUTPUT_DIR` (default `artifacts/`). Use `DATA_LIMIT=100000` for the baseline; increase it toward 9,852,739 for a full corpus run.
+
+## Launch API and UI
+
+Run these in separate terminals (embedded Qdrant is local persistent storage; avoid running indexer and API concurrently against the same path):
+
+```powershell
+uvicorn adrosonic_retrieval.api:app --host 127.0.0.1 --port 8000
+streamlit run src/adrosonic_retrieval/ui.py
+```
+
+API routes: `POST /search`, `GET /health`, and `GET /index/status`. Example:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/search -ContentType 'application/json' -Body '{"query":"what causes tides?","top_k":5}'
+```
+
+Response shape:
+
+```json
+{"query":"what causes tides?","results":[{"passage_id":"7349777","text":"...original passage...","score":0.73,"source":"sentence-transformers/msmarco-corpus","metadata":{"dataset_config":"passage","dataset_split":"train"},"retrieval_mode":"dense"}],"latency_ms":31.2,"retrieval_mode":"dense"}
+```
+
+Scores and example latency above illustrate response format only; they are not measured benchmark results. The actual endpoint returns real collection results or an explicit error.
+
+## Evaluation and benchmark
+
+```powershell
+python -m adrosonic_retrieval.evaluate
+python -m adrosonic_retrieval.benchmark --queries 100
+python -m adrosonic_retrieval.experiment_runner --list
+python -m adrosonic_retrieval.experiment_runner --experiment qwen-1024-batch64 --run --queries 100
+```
+
+Install optional evaluation dependencies before the RAGAS command: `python -m pip install -r requirements-eval.txt`. Evaluation uses MS MARCO v1.1 validation rows with human answers and selected passage contexts. It checks which labeled reference passages are already present in the current Qdrant collection, then evaluates only queries with at least one matching indexed reference; the report records this coverage and marks shortfalls as partial. This permits evaluation of an existing partial index without reindexing, but results are filtered to that subset and do not represent full-corpus performance. RAGAS Context Precision uses its non-LLM reference-context metric. Context Recall is unavailable without an LLM judge or aligned passage-ID qrels, and is recorded as such. For an LLM-based semantic Context Recall, an explicit evaluator integration can be added later; it is not needed for retrieval.
+
+The controlled experiment runner reads `experiments/phase1_screening.json`. It uses a separate collection and output folder per experiment, writes raw query latencies plus indexing/benchmark summaries, and creates a timestamped result manifest. Listing is safe and does not download files; `--run` performs model/data downloads and a 10k screening run. The full acceptance run should rerun the selected configuration with `DATA_LIMIT=100000`. No screening results are populated until the experiments are actually run. INT8 quantization was not enabled because no Qwen index or quality baseline is available to measure its effect.
+
+Benchmark captures every measured query with `perf_counter_ns`, including embedding and Qdrant timings, and reports p50/p95/p99/mean/min/max. In-process latency includes encoding, Qdrant, and result conversion; excludes API/HTTP serialization. The model is initialized before timed calls, so this is a warm benchmark. Reports in `reports/` are honest status snapshots; generated `artifacts/` files contain the actual results after local runs.
+
+## Tests
+
+```powershell
+python -m pytest -q
+```
+
+Tests use fake embedding vectors and temporary local Qdrant collections. They cover dimensions, top 5, output format, empty/malformed requests, schema validation, persistence, and FastAPI responses without downloading the large corpus or model.
+
+## Architecture and data flow
 
 ```mermaid
 flowchart LR
-  UI[Next.js dashboard] --> API[FastAPI]
-  API --> EMB[Qwen3 query embedder]
-  EMB --> QD[Local Qdrant dense index]
-  API --> BM[SQLite FTS5 BM25]
-  QD --> RRF[Reciprocal Rank Fusion]
-  BM --> RRF
-  RRF --> CTX[Top passages]
-  CTX --> AZ[Optional Azure AI Foundry answer generation]
-  MUT[Upsert/delete API] --> QD
-  MUT --> BM
-  OBS[Optional Langfuse traces] -.-> API
+  HF[Hugging Face MS MARCO passages] -->|stream rows| IDX[Indexing command]
+  IDX -->|batch encode, normalized vectors| ENC[Sentence Transformers]
+  ENC -->|vectors + original passage payload| Q[(Persistent local Qdrant<br/>cosine + HNSW)]
+  U[Streamlit UI] --> API[FastAPI]
+  API --> S[Retrieval service]
+  S -->|encode query once| ENC
+  S -->|top-k cosine ANN| Q
+  Q --> S --> API --> U
+  HF --> EV[MS MARCO labeled validation]
+  EV --> E[RAGAS evaluator]
+  Q --> E
+  E --> R[Evaluation report]
+  S --> B[100+ query benchmark]
+  B --> L[Per-query latency log + summary]
 ```
 
-## Tech stack
+At API startup, one embedding model and one local Qdrant client are initialized and reused. Ingestion writes points in batches to the persistent collection; queries create one normalized query vector and perform one approximate nearest-neighbor request. The evaluator and benchmark call the same framework-independent retrieval service used by the API.
 
-- Python, FastAPI, Pydantic, Loguru
-- Qwen3-Embedding-0.6B, 1,024-dimensional dense vectors
-- Qdrant Local at `storage/qdrant`, collection `passages`
-- SQLite FTS5 BM25 at `storage/sparse.sqlite3`
-- Dense and sparse candidate retrieval with RRF fusion
-- Next.js App Router, React, TypeScript, Framer Motion, Recharts, and Lucide
-- RAGAS 0.2.15 for Context Precision and Context Recall
-- Optional Azure AI Foundry for grounded answer generation and the saved RAGAS run
-- Optional Langfuse tracing
+## Troubleshooting
 
-## Installation
+- **Missing collection:** run indexing first; `/health` reports `index_missing` and search returns HTTP 503.
+- **Dimension/distance mismatch:** choose a new `COLLECTION_NAME` when changing the encoder. Existing incompatible schemas fail explicitly.
+- **Dataset/model download failure:** check network access and available disk; Hugging Face caches are controlled by the standard HF environment variables.
+- **Slow CPU indexing:** each batch logs when processing starts and when it completes. Reduce `BATCH_SIZE` if a batch takes too long or RAM is constrained, or use an available accelerator. Actual throughput is hardware-specific; inspect `indexing_report.json`.
+- **Embedded Qdrant lock:** close API before ingestion and avoid two processes opening one local database path at once.
+- **RAGAS API or scoring issue:** the exact evaluation exception should be retained in terminal output; the report remains unavailable until a valid run completes.
 
-Use Python 3.12 on Windows and a supported Node.js release for Next.js 16. Qwen model startup and Local Qdrant need substantial memory and Windows commit/pagefile capacity; the 100-query visualization does not reduce those requirements for live retrieval.
+## Current measured evidence
 
-```powershell
-py -3.12 -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-if (!(Test-Path .env)) { Copy-Item .env.example .env }
-
-cd frontend
-npm install
-if (!(Test-Path .env.local)) { Copy-Item .env.local.example .env.local }
-```
-
-For NVIDIA inference, install a CUDA-enabled PyTorch wheel compatible with the installed Windows/Python/CUDA versions, then verify `torch.cuda.is_available()`. If CUDA is unavailable, the backend may fall back to CPU, which needs more system RAM. Do not start corpus ingestion as part of the dashboard demo.
-
-## Configuration
-
-Keep credentials in the ignored root `.env` and frontend proxy URLs in `frontend/.env.local`. Never commit or print secret values.
-
-The principal local retrieval settings are:
-
-```dotenv
-EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
-QDRANT_PATH=storage/qdrant
-QDRANT_COLLECTION=passages
-BM25_INDEX_PATH=storage/sparse.sqlite3
-TOP_K=5
-RRF_K=60
-DENSE_CANDIDATE_K=50
-SPARSE_CANDIDATE_K=50
-```
-
-For Azure grounded generation, configure `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and `AZURE_OPENAI_DEPLOYMENT`. For optional tracing, configure `LANGFUSE_ENABLED`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_HOST`. These values are read by the backend and are not sent to browser code. See [docs/observability.md](docs/observability.md) for Langfuse behavior and limitations.
-
-## Run the application
-
-Start the backend from the repository root:
-
-```powershell
-uvicorn app.api:app --host 127.0.0.1 --port 8000
-```
-
-In a second terminal, start the dashboard:
-
-```powershell
-cd frontend
-npm run dev
-```
-
-Open `http://127.0.0.1:3000`. The frontend uses a same-origin Next.js proxy to the FastAPI service (`BACKEND_API_URL`, default `http://127.0.0.1:8000`). API docs are at `http://127.0.0.1:8000/docs`; `/health` and `/status` report backend/index readiness. A dashboard/API connection error does not mean saved report files are missing.
-
-## Retrieval
-
-### Dense retrieval
-
-Qwen embeds the query, then Local Qdrant searches the configured collection using cosine similarity. Search returns passages and ranking scores; scores are not probabilities.
-
-### BM25
-
-The SQLite FTS5 index performs sparse term-based retrieval. Its persisted rows are updated with the live update API. BM25 is also reported as a separate mode in the saved matched-corpus evaluation.
-
-### Hybrid retrieval and RRF
-
-Hybrid mode requests the configured dense and sparse candidate lists and combines their ranks with Reciprocal Rank Fusion. RRF uses `RRF_K` (currently 60); dense cosine scores and BM25 scores are not added together. `TOP_K` controls the number of final passages returned.
-
-### Metadata filtering
-
-The current HTTP API accepts an exact non-negative `source_id` filter. It applies that filter to both candidate retrievers before fusion and does not fall back to an unfiltered search if the filter has no matches:
-
-```json
-{
-  "query": "why do nails get rusty",
-  "mode": "hybrid",
-  "top_k": 5,
-  "filter": { "source_id": 19699 }
-}
-```
-
-See [docs/metadata_filtering.md](docs/metadata_filtering.md) for payload provenance and the Local Qdrant payload-index limitation.
-
-## API
-
-The primary endpoints are:
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Embedding, Qdrant, BM25, and configured Azure readiness |
-| `GET` | `/status` | Indexed counts, collection, model, and mutation synchronization state |
-| `POST` | `/search` | Dense or hybrid retrieval; optional source filter and grounded answer generation |
-| `POST` | `/upsert` | Add or replace one passage in both indexes |
-| `DELETE` | `/passages/{passage_id}` | Delete exactly one passage from both indexes |
-
-Example search:
-
-```powershell
-$body = @{ query = "how does photosynthesis work"; mode = "hybrid"; top_k = 5; filter = @{ source_id = 19699 } } | ConvertTo-Json -Compress
-Invoke-RestMethod 'http://127.0.0.1:8000/search' -Method Post -ContentType 'application/json' -Body $body
-```
-
-`mode` is `dense` or `hybrid`. Set `generate_answer` to `true` to request an optional Azure grounded answer after retrieval. See [docs/live_updates.md](docs/live_updates.md) before changing indexed data.
-
-## Live index updates
-
-Each upsert embeds a single passage and synchronizes that ID in Local Qdrant and SQLite FTS5. A write-ahead mutation journal records the pending operation and supports recovery after partial failures. Deletes target one explicit passage ID; there is no bulk-delete endpoint. The [Live Updates guide](docs/live_updates.md) documents the flow and safe disposable demo procedure.
-
-## Langfuse and logs
-
-Loguru writes structured local events. Langfuse is optional and failure-isolated; when enabled it receives retrieval/generation observations and selected query/context details. The dashboard reports configuration separately from connectivity and does not claim traces are available unless an API exposes them. See [docs/observability.md](docs/observability.md).
-
-## Evaluation
-
-The saved actual evaluation contains 10 matched-corpus queries, evaluated across Dense, BM25, and Hybrid/RRF. RAGAS 0.2.15 Context Precision and Context Recall were scored with the configured Azure AI Foundry `gpt-4.1` judge. Queries were generated from the active indexed passage text, and references were matched to the same passages; this is a matched-corpus pilot, **not official MS MARCO evaluation**.
-
-| Mode | Hit@1 | Hit@5 | Hit@10 | MRR | Context Precision | Context Recall |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | 0.70 | 1.00 | 1.00 | 0.833 | 0.9539 | 1.0000 |
-| BM25 | 0.40 | 0.80 | 0.90 | 0.582 | 0.6733 | 0.8400 |
-| Hybrid/RRF | 0.70 | 0.90 | 1.00 | 0.814 | 0.9543 | 0.9400 |
-
-The complete provenance, per-query scores, and errors are preserved in [reports/phase2/evaluation/ragas_matched_corpus.json](reports/phase2/evaluation/ragas_matched_corpus.json). See [docs/evaluation.md](docs/evaluation.md) for interpretation and status definitions.
-
-## Benchmarking and demo
-
-The `/benchmark` page has two separate views:
-
-1. **Actual Results** shows the measured 10-query matched-corpus retrieval and RAGAS metrics above.
-2. **100-Query Demo** shows deterministic simulated latency distributions, per-query charts, and mode comparisons for 100 query IDs across three retrieval modes. Its badge and notice say **DEMO / SIMULATED**; the displayed latency values are not measurements.
-
-Regenerate only the demo fixture (this script makes no model, API, Qdrant, BM25, or retrieval calls):
-
-```powershell
-.\venv\Scripts\python.exe scripts\generate_demo_benchmark.py
-```
-
-The fixture is `reports/demo/benchmark_100_simulated.json`. It is separate from `reports/phase2/benchmarks/benchmark_summary.json`, raw benchmark logs, and all RAGAS results. To perform a future real run, use `python -m app.benchmark --queries 100` only when you intend to execute retrieval on the indexed corpus; it is not needed to view the demo.
-
-See [docs/benchmark.md](docs/benchmark.md), [docs/demo.md](docs/demo.md), and [reports/final_benchmark_report.md](reports/final_benchmark_report.md) for exact provenance and limitations.
-
-## Tests and frontend checks
-
-Python tests use temporary stores and a deterministic test embedder. For frontend code:
-
-```powershell
-cd frontend
-npm run lint
-npm run typecheck
-npm run build
-```
-
-Do not use the simulated fixture to set production latency targets, estimate hardware capacity, or describe retrieval as executed.
+See [indexing report](reports/indexing_report.md), [benchmark report](reports/benchmark_report.md), [evaluation report](reports/evaluation_report.md), and [optimization report](reports/optimization_report.md). Fixture validation now has ten passing tests (`pytest 8.3.4`, `qdrant-client 1.13.3`). The Hub credential was verified, but the full ML stack installation stalled while unpacking PyTorch and was stopped. Qwen model loading, indexing, experiment runs, RAGAS scores, and latency figures remain unmeasured.

@@ -1,0 +1,4 @@
+# Optional RAGAS evaluation dependencies; install after requirements.txt.
+ragas==0.3.8
+langchain-community>=0.3.0,<0.4.0
+rapidfuzz==3.12.1

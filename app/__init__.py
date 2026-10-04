@@ -1,1 +1,0 @@
-"""Adrosonic hybrid retrieval application."""

@@ -1,0 +1,20 @@
+{
+  "timestamp_utc": "2026-10-02T20:46:15.168729+00:00",
+  "dataset": "microsoft/ms_marco",
+  "config": "v1.1",
+  "split": "validation",
+  "requested_query_count": 20,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "top_k": 5,
+  "packages": {
+    "ragas": null,
+    "datasets": null,
+    "sentence-transformers": null
+  },
+  "metrics": {
+    "context_precision": null,
+    "context_recall": null
+  },
+  "status": "unavailable",
+  "failure": "ModuleNotFoundError: No module named 'ragas'"
+}

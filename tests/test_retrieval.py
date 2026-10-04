@@ -1,246 +1,194 @@
+"""Small, download-free unit and local-Qdrant integration tests."""
+import numpy as np
 import pytest
-from pathlib import Path
-from uuid import uuid4
+import sys
+from types import SimpleNamespace
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
+from adrosonic_retrieval.embeddings import Embedder
+from adrosonic_retrieval.retrieval import RetrievalService, CollectionUnavailable
+from adrosonic_retrieval.store import PassageStore
+from adrosonic_retrieval.schemas import SearchRequest
+from adrosonic_retrieval.indexer import batched
+from adrosonic_retrieval import indexer
+from adrosonic_retrieval import evaluate as evaluation
+from adrosonic_retrieval.config import Settings
 
-from app.embedding import HashEmbedder
-from app.retrieval import reciprocal_rank_fusion
-from app.storage import HybridIndex, PassageNotFoundError
+class FakeEmbedder:
+    dimension = 3
+    def encode_query(self, text):
+        return np.array([1, 0, 0], dtype=np.float32)
 
+class FakeModel:
+    def get_embedding_dimension(self): return 3
+    def encode_query(self, texts, **kwargs): return np.ones((len(texts), 2), dtype=np.float32)
 
-def fresh_local_store_path() -> Path:
-    root = Path.cwd() / ".test-tmp"
-    root.mkdir(exist_ok=True)
-    path = root / f"retrieval-{uuid4().hex}"
-    path.mkdir()
-    return path
+def make_store(tmp_path, count=8):
+    store = PassageStore(tmp_path, "test_collection", vector_size=3)
+    records = [{"passage_id": str(i), "text": f"passage {i}", "source": "fixture",
+        "dataset_config": "test", "dataset_split": "train"} for i in range(count)]
+    vectors = np.array([[1, i / 100, 0] for i in range(count)], dtype=np.float32)
+    store.upsert(records, vectors)
+    return store
 
-def hit(pid,score=1): return {"id":pid,"text":pid,"metadata":{},"score":score}
+def test_embedding_dimension_validation():
+    embedder = object.__new__(Embedder)
+    embedder.dimension, embedder.model = 3, FakeModel()
+    with pytest.raises(ValueError, match="Embedding shape"):
+        embedder.encode_query("hello")
 
-def test_rrf_one_based_ranks_and_tie_break():
-    result=reciprocal_rank_fusion([[hit("b"),hit("a")],[hit("a"),hit("b")]],k=0)
-    assert [x["id"] for x in result]==["a","b"]
-    assert result[0]["score"]==pytest.approx(1+1/2)
-
-def test_sparse_metadata_precedes_ranking_and_mutations():
-    pytest.importorskip("qdrant_client")
-    from app.config import settings
-    tmp_path=fresh_local_store_path()
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(settings,"journal_path",str(tmp_path/"journal.jsonl"))
-        idx=HybridIndex(HashEmbedder(),str(tmp_path/"qdrant"),"test",str(tmp_path/"sparse.sqlite3"))
-        try:
-            idx.upsert("one","blue whale swims in the ocean",{"source":"a"})
-            idx.upsert("two","blue whale found in the sea",{"source":"b"})
-            assert {h["id"] for h in idx.sparse_search("blue whale",10,{"source":"a"})}=={"one"}
-            assert idx.dense_search("blue whale",10,{"source":"b"})[0]["id"]=="two"
-            idx.delete("one")
-            with pytest.raises(PassageNotFoundError):
-                idx.delete("one")
-            assert all(h["id"]!="one" for h in idx.sparse_search("blue whale",10))
-        finally:
-            idx.close()
-
-def test_dense_sparse_persistence_across_reopen():
-    pytest.importorskip("qdrant_client")
-    from app.config import settings
-    tmp_path=fresh_local_store_path()
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(settings,"journal_path",str(tmp_path/"journal.jsonl"))
-        args=(HashEmbedder(),str(tmp_path/"qdrant"),"persist",str(tmp_path/"sparse.sqlite3"))
-        idx=HybridIndex(*args)
-        idx.upsert("persisted","water boils at one hundred degrees",{"source":"test"})
-        idx.close()
-        idx=HybridIndex(*args)
-        try:
-            assert idx.count()==1
-            assert idx.sparse.count()==1
-            assert idx.dense_search("water boils",1)[0]["id"]=="persisted"
-        finally:
-            idx.close()
-
-def test_invalid_metadata_field_rejected():
-    from app.storage import validate_metadata
-    with pytest.raises(ValueError): validate_metadata({"source.foo":"x"})
-
-def test_sparse_store_exact_metadata_filter_and_upsert():
-    from app.storage import SparseStore
-    store=SparseStore(":memory:")
-    store.upsert("one","blue whale swims",{"source":"first"})
-    store.upsert("two","blue whale swims",{"source":"second"})
-    assert [x["id"] for x in store.search("whale",10,{"source":"second"})]==["two"]
-    store.upsert("two","orcas swim in cold water",{"source":"second"})
-    assert store.search("whale",10,{"source":"second"})==[]
-    store.delete("one")
-    assert store.count()==1
+def test_result_format_top_five_and_empty_query(tmp_path):
+    store = make_store(tmp_path)
+    service = RetrievalService(FakeEmbedder(), store, top_k=5)
+    result = service.search("question")
+    assert len(result["results"]) == 5
+    assert {"passage_id", "text", "score", "source", "metadata", "retrieval_mode"} <= result["results"][0].keys()
+    assert result["results"][0]["retrieval_mode"] == "dense"
+    with pytest.raises(ValueError, match="empty"):
+        service.search("  ")
     store.close()
 
-def test_optional_mistral_is_disabled_without_free_tier_confirmation(monkeypatch):
-    import asyncio
-    from app.config import settings
-    from app.mistral import MistralUnavailable,grounded_answer
-    monkeypatch.setitem(settings.__dict__,"mistral_api_key","example-key")
-    monkeypatch.setattr(settings,"mistral_free_tier_confirmed",False)
-    with pytest.raises(MistralUnavailable): asyncio.run(grounded_answer("question",[]))
+def test_missing_collection_is_explicit(tmp_path):
+    store = PassageStore(tmp_path, "missing")
+    with pytest.raises(CollectionUnavailable):
+        RetrievalService(FakeEmbedder(), store).search("hello")
+    store.close()
 
-def test_api_search_request_bounds_and_defaults():
-    from pydantic import ValidationError
-    from app.api import SearchRequest
-    assert SearchRequest(query="test").top_k==5
-    with pytest.raises(ValidationError): SearchRequest(query="test",top_k=21)
+def test_qdrant_persistence_and_schema(tmp_path):
+    store = make_store(tmp_path, count=2)
+    assert store.count() == 2
+    store.close()
+    reopened = PassageStore(tmp_path, "test_collection")
+    assert reopened.count() == 2
+    with pytest.raises(ValueError, match="schema mismatch"):
+        reopened.ensure_collection(5)
+    reopened.close()
 
-def test_mistral_mock_requires_valid_passage_citation(monkeypatch):
-    import asyncio
-    from app.config import settings
-    import app.mistral as mistral
-    monkeypatch.setitem(settings.__dict__,"mistral_api_key","test-secret")
-    monkeypatch.setitem(settings.__dict__,"mistral_model","mistral-small-latest")
-    monkeypatch.setattr(settings,"mistral_free_tier_confirmed",True)
-    class Response:
-        status_code=200
-        def raise_for_status(self): pass
-        def json(self): return {"choices":[{"message":{"content":"Grounded claim [p1]."}}]}
-    class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self,*args): return None
-        async def post(self,*args,**kwargs): return Response()
-    monkeypatch.setattr(mistral.httpx,"AsyncClient",lambda **kwargs:Client())
-    result=asyncio.run(mistral.grounded_answer("q",[{"id":"p1","text":"evidence"}]))
-    assert result["supporting_passage_ids"]==["p1"]
+def test_empty_and_malformed_requests():
+    with pytest.raises(ValueError):
+        SearchRequest(query="   ")
+    with pytest.raises(ValueError):
+        SearchRequest(query="hello", top_k=0)
+    with pytest.raises(ValueError):
+        SearchRequest(query="hello", extra_field=True)
 
-def test_ms_marco_loader_uses_streaming_parquet_for_current_hub_format(monkeypatch):
-    import app.datasets as loader
-    from app.config import settings
-    calls=[]
-    monkeypatch.setattr(loader,"load_dataset",lambda *args,**kwargs:(calls.append((args,kwargs)) or "stream"))
-    monkeypatch.setattr(settings,"dataset_name","microsoft/ms_marco")
-    monkeypatch.setattr(settings,"dataset_config","v1.1")
-    assert loader.load_split("validation")=="stream"
-    assert calls[0][0]==("parquet",)
-    assert calls[0][1]["streaming"] is True
-    assert calls[0][1]["data_files"]["validation"].endswith("v1.1/validation-00000-of-00001.parquet")
+def test_ingestion_batches_are_bounded_and_deduplicate_stable_ids():
+    rows = [{"passage_id": str(i), "text": str(i)} for i in range(4)]
+    rows.insert(1, {"passage_id": "0", "text": "duplicate"})
+    batches = list(batched(rows, 2))
+    assert all(len(batch) <= 2 for batch in batches)
+    assert len([row for batch in batches for row in batch]) == 4
 
-def test_api_returns_unavailable_for_mutations_without_an_index(monkeypatch):
-    from fastapi.testclient import TestClient
-    import app.api as api
-    monkeypatch.setattr(api,"index",None)
-    monkeypatch.setattr(api,"model_ready",False)
-    def unavailable_embedder(*args,**kwargs):
-        raise RuntimeError("test startup intentionally unavailable")
-    monkeypatch.setattr(api,"QwenEmbedder",unavailable_embedder)
-    with TestClient(api.app,raise_server_exceptions=False) as client:
-        assert client.get("/health").json()["status"]=="degraded"
-        assert client.post("/search",json={"query":"hello"}).status_code==503
-        assert client.post("/upsert",json={"passage_id":"x","text":"hello","source_id":"test"}).status_code==503
-        assert client.delete("/passages/x").status_code==503
+def test_indexer_logs_progress_for_batches_after_the_first(monkeypatch, tmp_path, caplog):
+    class FakeEmbedder:
+        dimension = 3
+        model_revision = None
+        precision = "fp32"
+        device = "cpu"
 
-def test_embedding_device_auto_and_cpu_fallback():
-    from types import SimpleNamespace
-    from app.embedding import resolve_device
-    cpu_torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:False))
-    cuda_torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:True))
-    assert resolve_device(cpu_torch,"auto")=="cpu"
-    assert resolve_device(cuda_torch,"auto")=="cuda"
-    with pytest.raises(RuntimeError,match="cannot access CUDA"):
-        resolve_device(cpu_torch,"cuda")
+        def __init__(self, *args, **kwargs): pass
+        def encode_documents(self, texts, batch_size):
+            return np.ones((len(texts), self.dimension), dtype=np.float32)
 
-def test_embedding_reduces_batch_and_retries_after_cuda_oom(monkeypatch):
-    import numpy as np
-    import torch
-    from types import SimpleNamespace
-    from app.embedding import QwenEmbedder
-
-    if not torch.cuda.is_available():
-        pytest.skip("the CUDA OOM simulation requires a CUDA-enabled torch runtime")
-
-    class FakeBatch(dict):
-        def to(self,device):
-            return FakeBatch({key:value.to(device) for key,value in self.items()})
-    class FakeTokenizer:
-        def __call__(self,texts,**kwargs):
-            if len(texts)>2: raise torch.cuda.OutOfMemoryError("simulated OOM")
-            return FakeBatch({"attention_mask":torch.ones((len(texts),2),dtype=torch.long)})
-    class FakeModel:
-        def __call__(self,**batch):
-            return SimpleNamespace(last_hidden_state=torch.ones((batch["attention_mask"].shape[0],2,2),device=batch["attention_mask"].device))
-
-    embedder=object.__new__(QwenEmbedder)
-    embedder.torch=torch
-    embedder.tokenizer=FakeTokenizer()
-    embedder.model=FakeModel()
-    embedder.device="cuda"
-    embedder.dimension=2
-    embedder.max_seq_length=8
-    embedder.batch_size=4
-    vectors=embedder.encode_documents(["one","two","three","four"])
-    assert vectors.shape==(4,2)
-    assert embedder.batch_size==2
-    assert np.isfinite(vectors).all()
-
-def test_gpu_embedding_configuration_aliases_and_bounds(monkeypatch):
-    from pydantic import ValidationError
-    from app.config import Settings
-    for key,value in {
-        "EMBEDDING_MODEL":"Qwen/Qwen3-Embedding-0.6B",
-        "EMBEDDING_DEVICE":"auto",
-        "EMBEDDING_BATCH_SIZE":"16",
-        "EMBEDDING_MAX_SEQ_LENGTH":"256",
-        "EMBEDDING_PRECISION":"float16",
-        "QDRANT_UPSERT_BATCH_SIZE":"128",
-    }.items():
-        monkeypatch.setenv(key,value)
-    config=Settings(_env_file=None)
-    assert config.hf_model_name=="Qwen/Qwen3-Embedding-0.6B"
-    assert config.device=="auto"
-    assert config.embedding_batch_size==16
-    assert config.embedding_max_seq_length==256
-    assert config.embedding_precision=="float16"
-    assert config.qdrant_upsert_batch_size==128
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None,embedding_batch_size=0)
-
-def test_ingestion_resume_targets_total_count_and_skips_existing(monkeypatch):
-    import sys
-    import json
-    from pathlib import Path
-    import app.ingest as ingest
-
-    class FakeEncoder:
-        device="cpu"; gpu_name=None; effective_precision="float32"; batch_size=2; dimension=1024
-
-    class FakeSparse:
-        def __init__(self,ids): self.ids=set(ids)
-        def count(self): return len(self.ids)
-        def contains(self,pid): return pid in self.ids
-
-    class FakeIndex:
-        def __init__(self):
-            self.ids={"msmarco-existing-0"}
-            self.sparse=FakeSparse(self.ids)
-            self.last_upsert_timings={"embedding_seconds":0.01,"sparse_seconds":0.01,"qdrant_seconds":0.01}
-        def count(self): return len(self.ids)
-        def upsert_many(self,rows):
-            self.ids.update(row[0] for row in rows)
-            self.sparse.ids.update(row[0] for row in rows)
+    class FakeStore:
+        def __init__(self, *args, **kwargs): self.indexed = 0
+        def count(self): return self.indexed
+        def upsert(self, rows, vectors): self.indexed += len(rows)
         def close(self): pass
 
-    rows=[
-        {"query_id":"existing","passages":{"passage_text":["already indexed","new one"],"is_selected":[False,True]}},
-        {"query_id":"second","passages":{"passage_text":["new two"],"is_selected":[False]}},
-        {"query_id":"third","passages":{"passage_text":["must not exceed target"],"is_selected":[False]}},
+    rows = [{"passage_id": str(i), "text": f"passage {i}"} for i in range(300)]
+    monkeypatch.setattr(indexer, "Embedder", FakeEmbedder)
+    monkeypatch.setattr(indexer, "PassageStore", FakeStore)
+    monkeypatch.setattr(indexer, "load_passages", lambda *args: iter(rows))
+    settings = Settings(batch_size=128, data_limit=300, output_dir=tmp_path)
+
+    with caplog.at_level("INFO", logger=indexer.__name__):
+        report = indexer.run_index(settings)
+
+    assert report["indexed_this_run"] == 300
+    assert [record.getMessage() for record in caplog.records
+            if record.getMessage().startswith("Indexed ")] == [
+        "Indexed 128 passages", "Indexed 256 passages", "Indexed 300 passages"]
+
+def test_huggingface_api_key_loads_from_dotenv_without_plaintext_repr(tmp_path):
+    env_file = tmp_path / "test.env"
+    env_file.write_text("HUGGINGFACE_API_KEY=fixture-token-value\n", encoding="utf-8")
+    settings = Settings(_env_file=env_file)
+    assert settings.hf_token_value == "fixture-token-value"
+    assert "fixture-token-value" not in repr(settings.hf_api_key)
+
+def test_qwen_embedding_configuration_accepts_matryoshka_sizes():
+    for dimension in (256, 512, 768, 1024):
+        assert Settings(embedding_dimension=dimension).embedding_dimension == dimension
+    with pytest.raises(ValueError):
+        Settings(embedding_precision="int8")
+    assert Settings(model_revision="").model_revision is None
+
+def test_qwen_embedder_uses_instruction_token_and_requested_dimension(monkeypatch):
+    instances = []
+    class FakeSentenceTransformer:
+        def __init__(self, model_name, device, **kwargs):
+            self.kwargs = kwargs
+            self.prompts = {"query": "old prompt"}
+            self.dimension = kwargs.get("truncate_dim", 1024)
+            instances.append(self)
+        def get_embedding_dimension(self): return self.dimension
+        def modules(self): return []
+        def eval(self): return self
+        def encode_query(self, texts, **kwargs):
+            assert kwargs["normalize_embeddings"] is True
+            row = np.zeros((1, self.dimension), dtype=np.float32); row[0, 0] = 1.0
+            return np.tile(row, (len(texts), 1))
+        def encode_document(self, texts, **kwargs):
+            assert kwargs["normalize_embeddings"] is True
+            row = np.zeros((1, self.dimension), dtype=np.float32); row[0, 0] = 1.0
+            return np.tile(row, (len(texts), 1))
+    monkeypatch.setitem(sys.modules, "sentence_transformers", SimpleNamespace(SentenceTransformer=FakeSentenceTransformer))
+    from adrosonic_retrieval.embeddings import Embedder
+    model = Embedder("Qwen/Qwen3-Embedding-0.6B", dimension=512, precision="fp16",
+        query_instruction="retrieve answer passages", token="fixture-token", revision="abc123")
+    assert model.dimension == 512
+    assert model.precision == "fp32"  # CPU inference safely falls back from FP16.
+    assert model.model.kwargs["truncate_dim"] == 512
+    assert model.model.kwargs["token"] == "fixture-token"
+    assert model.model.kwargs["revision"] == "abc123"
+    assert model.model.prompts["query"] == "Instruct: retrieve answer passages\nQuery:"
+    assert np.allclose(model.encode_query("sample")[:2], [1.0, 0.0])
+    assert model.encode_documents(["passage"]).shape == (1, 512)
+
+def test_ragas_non_llm_context_precision_imports_when_installed():
+    pytest.importorskip("ragas")
+    from ragas.metrics import NonLLMContextPrecisionWithReference
+
+    assert NonLLMContextPrecisionWithReference is not None
+
+def test_evaluation_filters_references_to_existing_index():
+    rows = [
+        {"query": "first", "reference_contexts": ["Not indexed", "  Indexed\n passage "]},
+        {"query": "second", "reference_contexts": ["Also absent"]},
+        {"query": "third", "reference_contexts": ["indexed passage"]},
     ]
-    fake_index=FakeIndex()
-    temp_root=Path.cwd()/".test-tmp"
-    temp_root.mkdir(exist_ok=True)
-    report_path=temp_root/"ingest_resume_test.json"
-    monkeypatch.setattr(ingest,"REPORT_PATH",report_path)
-    monkeypatch.setattr(sys,"argv",["app.ingest","--limit","3"])
-    monkeypatch.setattr(ingest,"load_split",lambda split:rows)
-    monkeypatch.setattr(ingest,"QwenEmbedder",lambda *args,**kwargs:FakeEncoder())
-    monkeypatch.setattr(ingest,"HybridIndex",lambda *args,**kwargs:fake_index)
-    ingest.main()
-    assert fake_index.count()==3
-    assert fake_index.ids=={"msmarco-existing-0","msmarco-existing-1","msmarco-second-0"}
-    report=json.loads(report_path.read_text())
-    assert report["status"]=="complete"
-    assert report["existing_passages_skipped_on_resume"]==1
-    assert report["passages_indexed_this_run"]==2
+
+    selected = evaluation.select_evaluable_rows(rows, {"indexed passage"}, count=10)
+
+    assert [row["query"] for row in selected] == ["first", "third"]
+    assert selected[0]["reference_contexts"] == ["  Indexed\n passage "]
+    assert selected[1]["reference_contexts"] == ["indexed passage"]
+
+def test_evaluation_reference_scan_reads_qdrant_pages_and_stops_when_complete():
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+        def scroll(self, **kwargs):
+            self.calls += 1
+            return ([SimpleNamespace(payload={"text": "reference"})], None)
+
+    class FakeStore:
+        collection = "test"
+        client = FakeClient()
+
+    rows = [{"reference_contexts": ["Reference"]}]
+    store = FakeStore()
+
+    assert evaluation.indexed_reference_contexts(store, rows) == {"reference"}
+    assert store.client.calls == 1

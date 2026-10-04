@@ -1,10 +1,5 @@
-# Retrieval quality report
+# RAGAS evaluation
 
-**Status: NOT RUN.** There is no indexed corpus or valid evaluation run artifact in this workspace.
+**Status: unavailable.** The evaluator was invoked and wrote `artifacts/evaluation_report.json`. It failed before loading data with the exact error `ModuleNotFoundError: No module named 'ragas'`. The optional evaluation dependencies, model, validation data, and indexed collection are not locally available. Both metric values are `null`; no score is reported.
 
-| Phase | Context Precision | Context Recall | Evaluated queries |
-|---|---:|---:|---:|
-| Phase 1 dense | Not measured | Not measured | 0 |
-| Phase 2 hybrid RRF | Not measured | Not measured | 0 |
-
-The evaluation script writes the actual per-query results and RAGAS version to `artifacts/evaluation.json`. It requires at least 20 examples from the MS MARCO validation split, a working local index, RAGAS 0.2, and a judge account/model whose free-tier allowance has been explicitly confirmed. No result has been estimated or filled in.
+The evaluator requires 20 examples with query, answer, and selected reference passage contexts. It records the RAGAS version, configuration, model, timestamp, and Context Precision output in `artifacts/evaluation_report.json`. The offline path uses RAGAS `NonLLMContextPrecisionWithReference`; Context Recall is marked unavailable because this configuration does not use an LLM judge and has no matching passage-ID qrels for the selected MS MARCO v1.1 context set. No paid API or LLM is required for dense search.

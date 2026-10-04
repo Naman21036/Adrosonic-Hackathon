@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: adrosonic-dense-retrieval
+Version: 1.0.0
+Summary: Reproducible MS MARCO dense retrieval with local Qdrant
+Requires-Python: <3.13,>=3.11
+License-File: LICENSE
+Dynamic: license-file
