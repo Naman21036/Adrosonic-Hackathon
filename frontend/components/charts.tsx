@@ -100,7 +100,7 @@ export function SimulatedLatencyDistribution({ report }: { report: DemoBenchmark
           <CartesianGrid stroke="rgba(191,211,232,.07)" vertical={false} />
           <XAxis dataKey="bucket" tick={{ fill: "#8292a1", fontSize: 9 }} axisLine={false} tickLine={false} />
           <YAxis allowDecimals={false} tick={{ fill: "#718292", fontSize: 9 }} axisLine={false} tickLine={false} />
-          <Tooltip contentStyle={tooltipStyle} formatter={(value) => [`${value} records`, "Count"]} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(value) => [`${value} ${value === 1 ? "record" : "records"}`, "Count"]} />
           <Legend verticalAlign="top" height={24} wrapperStyle={{ color: "#9aabba", fontSize: 9 }} />
           {demoModes.map(({ key, label, color }) => <Bar key={key} dataKey={key} name={label} fill={color} radius={[3, 3, 0, 0]} maxBarSize={18} />)}
         </BarChart>
